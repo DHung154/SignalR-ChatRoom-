@@ -44,6 +44,7 @@ Google Gemini API Key (Get it from Google AI Studio)
 Bash
 
 git clone [https://github.com/DHung154/SignalR-Chat-Room-.git](https://github.com/DHung154/SignalR-Chat-Room-.git)
+
 3. Configuration
 Open appsettings.json in the SignalRChatRoom.Server project and add your API key:
 
