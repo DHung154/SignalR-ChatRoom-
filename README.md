@@ -1,4 +1,3 @@
-Đây là bản README.md hoàn chỉnh cho dự án SignalR ChatRoom của ông, tui đã cập nhật thêm link clone repository và tối ưu lại các phần dựa trên mã nguồn ông cung cấp:
 
 SignalR ChatRoom with AI Integration
 A real-time communication platform built with ASP.NET Core SignalR and integrated with Google Gemini AI. This project supports private messaging, group chats, typing indicators, and real-time reactions.
