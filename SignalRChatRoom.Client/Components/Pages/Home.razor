@@ -1,0 +1,1209 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IAsyncDisposable
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+<PageTitle>Phòng Chat</PageTitle>
+
+<style>
+    main {
+        overflow-x: auto;
+    }
+
+    /* Bắt đầu sửa đổi cho bố cục 3 cột */
+    .container {
+        display: flex; /* Đã sửa: dùng flex cho bố cục 3 cột */
+        width: 100%;
+        min-height: 80vh;
+        margin: 0;
+    }
+
+    /* Thêm style cho cột Trò chuyện với AI */
+    .ai-chat {
+        width: 250px; /* Chiều rộng cố định cho cột AI */
+        background-color: #e6f7ff; /* Màu nền khác biệt (tùy chọn) */
+        padding: 20px;
+        border: 1px solid #cceeff;
+        box-sizing: border-box;
+        flex-shrink: 0;
+    }
+
+    .users {
+        width: 250px; /* Đã sửa: Chiều rộng cố định cho các cột danh sách */
+        background-color: #f2f2f2;
+        padding: 20px;
+        border: 1px solid #e0e0e0;
+        box-sizing: border-box;
+        flex-shrink: 0; /* Đã thêm: đảm bảo cột không bị thu nhỏ */
+    }
+
+        /* Kết thúc sửa đổi cho bố cục 3 cột */
+        .users h3 {
+            margin-top: 0;
+            padding: 10px;
+        }
+
+        .users ul {
+            list-style-type: none;
+            overflow-y: auto;
+            max-height: 330px;
+            padding: 0;
+        }
+
+        .users .user {
+            cursor: pointer;
+            padding: 10px;
+            margin-bottom: 5px;
+            background-color: #e0e0e0;
+        }
+
+            .users .user.active {
+                background-color: #ffff;
+            }
+
+    .user.disabled {
+        pointer-events: none; /* Tắt khả năng click */
+        opacity: 0.5; /* Tạo giao diện bị vô hiệu hóa */
+    }
+
+    .conversation {
+        flex: 1; /* Đã sửa: Chiếm hết không gian còn lại (phần giữa) */
+        padding: 20px;
+        border: 1px solid #e0e0e0;
+        box-sizing: border-box;
+        min-width: 400px;
+        overflow: hidden; /* Đã thêm: ngăn chặn tràn ngang */
+    }
+
+        .conversation .header {
+            background-color: #e0e0e0;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+
+    .messages {
+        overflow-y: auto;
+        max-height: 400px;
+        min-height: 400px;
+        display: flex; /* Đã sửa: Bật Flexbox để căn chỉnh tin nhắn sent/received */
+        flex-direction: column; /* Đã sửa: Sắp xếp tin nhắn theo chiều dọc */
+    }
+
+    .message {
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        max-width: 70%; /* Đã sửa lỗi tràn: Giới hạn chiều rộng tối đa */
+        word-break: break-word; /* Đã sửa lỗi tràn: Buộc ngắt từ dài */
+        box-sizing: border-box;
+        position: relative; /* BỔ SUNG: Cần thiết cho menu thả cảm xúc tuyệt đối */
+    }
+
+    /* Vị trí icon cảm xúc đã thả (BỔ SUNG) */
+    .reaction-display {
+        position: absolute;
+        bottom: -10px; /* Thấp hơn tin nhắn */
+        right: 0px;
+        background-color: #fff;
+        border-radius: 50%;
+        padding: 3px;
+        box-shadow: 0 0 5px rgba(0,0,0,0.2);
+        font-size: 10px;
+        cursor: default;
+    }
+
+    /* Menu thả cảm xúc (Ẩn mặc định) (BỔ SUNG) */
+    .reaction-menu {
+        position: absolute;
+        top: -35px; /* Hiện ở phía trên tin nhắn */
+        left: 0;
+        background-color: #fff;
+        border: 1px solid #ccc;
+        border-radius: 10px;
+        padding: 5px;
+        box-shadow: 0 2px 5px rgba(0, 2px, 5px, 0.2);
+        z-index: 10;
+        display: flex;
+        gap: 5px;
+    }
+
+        .reaction-menu span {
+            cursor: pointer;
+            font-size: 18px;
+            transition: transform 0.1s;
+        }
+
+            .reaction-menu span:hover {
+                transform: scale(1.2);
+            }
+
+
+    /* Đã sửa lỗi tràn: Loại bỏ margin mặc định của thẻ p */
+    .message p {
+        margin: 0;
+    }
+
+    .sent {
+        background-color: #DCF8C6;
+        margin-left: auto; /* Quy tắc căn chỉnh flexbox (căn phải) */
+    }
+
+    .received {
+        background-color: #ECE5DD;
+        margin-right: auto; /* Quy tắc căn chỉnh flexbox (căn trái) */
+    }
+
+    .time, .sender {
+        font-size: 12px;
+        color: #666;
+    }
+
+    button, input, optgroup, select, textarea {
+        margin: 0;
+        font-family: inherit;
+        font-size: inherit;
+        line-height: inherit;
+        max-width: -webkit-fill-available;
+    }
+
+    .input-area {
+        margin-top: 20px;
+        overflow: hidden;
+    }
+
+        .input-area input {
+            /* Điều chỉnh width để phù hợp với 2 button */
+            width: calc(100% - 150px);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 15px;
+        }
+
+        .input-area button {
+            width: 50px;
+            padding: 14px;
+            background-color: #4CAF50;
+            color: #fff;
+            border: none;
+            border-radius: 15px;
+            cursor: pointer;
+            float: right;
+            margin-left: 5px; /* Thêm khoảng cách giữa các nút */
+            /* Căn giữa icon */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px; /* Kích thước icon */
+        }
+
+        .input-area .btn-select-image {
+            background-color: #007bff; /* Màu xanh dương cho nút chọn ảnh */
+            border-radius: 15px;
+        }
+
+        .input-area button:hover {
+            opacity: 0.8;
+        }
+
+    .addGroup {
+        margin-top: 10px;
+    }
+
+    .chat-image {
+        max-width: 200px;
+        max-height: 200px;
+        border-radius: 10px;
+        cursor: pointer;
+    }
+
+
+        /* Phóng to hình ảnh*/
+        .chat-image:hover {
+            opacity: 0.9;
+        }
+</style>
+@if (!IsAuthenticated)
+{
+    <Toasts class="p-3" Messages="AuthenticationMessages" AutoHide="true" StackLength="3" Placement="ToastsPlacement.TopRight" />
+
+    <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);">
+        <Card Color="CardColor.Light" Class="mb-4" Style="width:18rem;">
+            <CardHeader>Phòng Chat</CardHeader>
+            <CardBody>
+                <CardTitle>Đăng nhập</CardTitle>
+                <InputText style="padding: 10px 10px 10px 5px; display:
+        block; width: 300px; border: none; border-bottom: 1px solid #757575;" @bind-Value="CallerUsername" placeholder="Tên người dùng"></InputText>
+                <Button class="addGroup" Color="ButtonColor.Primary" @onclick=SignIn> Đăng nhập </Button>
+            </CardBody>
+        </Card>
+    </div>
+}
+else
+{
+    <Toasts class="p-3" Messages="NotificationMessages" AutoHide="true" StackLength="3" Placement="ToastsPlacement.TopRight" />
+
+    <div class="container">
+
+        @* CỘT 1: Trò chuyện với AI (MỚI) *@
+        <div class="ai-chat">
+
+            <h3>🤖 Trò chuyện với AI</h3>
+            <ul>
+                @* SỬA LỖI: Thêm logic chọn AI Assistant *@
+                <li class="user @(IsAiChatSelected ? "active" : "")" @onclick="SelectAiChat">@AiAssistantName</li>
+                @* Bạn có thể thêm logic chọn AI tại đây sau *@
+            </ul>
+            <div style="margin-top: 20px; font-size: 14px; color: #666;">
+                <p>Tính năng AI Chat sẽ được kích hoạt tại đây.</p>
+            </div>
+        </div>
+
+        @* Cột 1: Danh sách các phòng/nhóm trong hệ thống (BÊN TRÁI) *@
+
+        <div class="users">
+            <div>
+                <input style="padding: 10px 10px 10px 5px;
+        display: block; width: 300px; border: none; border-bottom: 1px solid #757575;" type="text" @bind-value="GroupNameInput" placeholder="Tên phòng">
+                <Button class="addGroup" Color="ButtonColor.Primary" @onclick=@(() => AddGroup(GroupNameInput))> Thêm Phòng </Button>
+            </div>
+            <h3>Phòng</h3>
+            <ul>
+                @foreach (var group in Groups)
+
+                {
+                    <Tooltip Class="me-4" Title="Nhấp vào để tham gia phòng và xem thành viên." Placement="TooltipPlacement.Right">
+                        <li class="user @(group == selectedGroup ? "active" : "")" @onclick="@(() => SelectGroup(group))">@group.GroupName</li>
+                    </Tooltip>
+
+                }
+            </ul>
+        </div>
+
+        @* Cột 2: Danh sách tin nhắn (ĐOẠN CHAT Ở GIỮA) *@
+        <div class="conversation">
+            @* SỬA LỖI: Thêm logic hiển thị tiêu đề AI Chat *@
+            @if (IsAiChatSelected)
+
+            {
+                <div class="header">
+                    <h3>🤖 @AiAssistantName (Trò chuyện với AI)</h3>
+                </div>
+            }
+            else if (selectedClient.Username != null && !string.IsNullOrEmpty(selectedClient.Username))
+
+            {
+                <div class="header">
+                    <h3>@selectedClient.Username (Trò chuyện riêng)</h3>
+                </div>
+            }
+            else if (selectedGroup.GroupName != null && !string.IsNullOrEmpty(selectedGroup.GroupName))
+
+            {
+                <div class="header">
+                    <h3>@selectedGroup.GroupName (Trò chuyện nhóm)</h3>
+                </div>
+            }
+            else
+            {
+
+                <div class="header">
+                    <h3>
+                        Wellcome, @CallerUsername!
+                        (Vui lòng chọn Phòng & Người dùng)
+                    </h3>
+                </div>
+            }
+
+            @* Khối trạng thái đang gõ đã được thêm *@
+            @if (!string.IsNullOrEmpty(TypingUser))
+            {
+                <p style="font-style: italic; color:
+                 #666; margin-top: 5px;">@TypingUser đang gõ...</p>
+            }
+
+            <div class="messages" @ref="messagesContainer">
+                @for (int i = 0; i < SelectedUserMessages.Count; i++)
+                {
+                    var msg = SelectedUserMessages[i];
+                    bool isImage = msg.Message.StartsWith("data:image");
+
+                    <div class="message @(msg.IsSenderReceiver ? "sent" : "received")"
+                         @onmouseenter="@(() => ShowReactionMenu(msg.MessageId))"
+                         @onmouseleave="@(() => HideReactionMenu())">
+                        @* BỔ SUNG: Thêm sự kiện hover *@
+
+                        @* BỔ SUNG: Menu thả cảm xúc *@
+                        @if (IsReactionMenuVisible(msg.MessageId))
+                        {
+                            <div class="reaction-menu">
+                                @foreach (var emoji in Reactions)
+                                {
+                                    <span @onclick="@(() => SendReaction(msg, emoji))" title="@emoji">@emoji</span> @* Gọi phương thức SendReaction *@
+                                }
+                            </div>
+                        }
+
+                        @if (msg.IsGroupMessage && !msg.IsSenderReceiver)
+                        {
+                            <span class="sender">Người gửi: @msg.SenderClientUsername</span>
+
+                        }
+                        @* BỔ SUNG: Hiển thị tên người gửi nếu là tin nhắn AI trả lời *@
+                        @if (msg.SenderClientUsername == AiAssistantName && !msg.IsSenderReceiver)
+
+                        {
+                            <span class="sender">Người gửi: @msg.SenderClientUsername</span>
+                        }
+
+                        @if (isImage)
+
+                        {
+                            <img src="@msg.Message" class="chat-image" />
+                        }
+                        else
+
+                        {
+                            <p>@msg.Message</p>
+                        }
+
+                        <span class="time">@msg.CreatedDate.ToShortTimeString()</span>
+
+                        @* BỔ SUNG: Hiển thị cảm xúc đã thả *@
+                        @if (!string.IsNullOrEmpty(msg.Reaction))
+                        {
+                            <span class="reaction-display" title="@msg.Reaction">@msg.Reaction</span>
+                        }
+
+                    </div>
+                }
+            </div>
+
+            <div class="input-area">
+                @* Nút Gửi Ảnh (Camera) - Căn phải *@
+                <button class="btn btn-primary btn-select-image"
+                        @onclick="TriggerFileInput"
+                        title="Chọn ảnh">
+                    <i class="fa fa-camera"></i>
+
+                </button>
+
+                @* Nút Gửi Tin Nhắn (Mũi tên/Máy bay giấy) - Căn phải *@
+                <button @onclick="@(async () => await SendMessageAsync(TextMessage, selectedGroup?.GroupName))"
+                        title="Gửi tin nhắn">
+
+                    <i class="fa fa-paper-plane"></i>
+                </button>
+
+                @* Input field - Căn trái, chiều rộng còn lại *@
+                <input type="text"
+                       @bind="TextMessage"
+                       @onkeyup="KeyHandler"
+                       placeholder="Viết tin nhắn của bạn ở đây.." />
+
+
+                <InputFile OnChange="OnFileSelected"
+                           id="fileInput"
+                           style="display:none" />
+
+            </div>
+        </div>
+
+
+        @* Cột 3 (BÊN PHẢI): Gộp Danh sách Thành viên Phòng và Tất cả người dùng *@
+        @* Phần 1: Danh sách các client thuộc phòng/nhóm đã chọn.
+        *@
+        <div class="users" style="display: @displayStyle">
+            @if (!string.IsNullOrEmpty(selectedGroup.GroupName))
+            {
+                <h3>Thành viên phòng @selectedGroup.GroupName </h3>
+                <ul>
+                    @foreach (var client in ClientsOfGroups)
+
+                    {
+                        <li class="user @(client.Username.Equals(CallerUsername) ? "disabled" : "")">@client.Username</li>
+                    }
+                </ul>
+            }
+
+        </div>
+
+        @* Phần 2: Danh sách các client trong hệ thống.
+        *@
+        <div class="users">
+            <h3>Tất cả người dùng</h3>
+            <ul>
+                @foreach (var client in Clients)
+                {
+                    <li class="user @(client == selectedClient ? "active" :
+                                                "") @(client.Username.Equals(CallerUsername) ? "disabled" : "")" @onclick="@(() => SelectClient(client))">@client.Username</li>
+                        }
+            </ul>
+        </div>
+
+    </div>
+}
+
+@code {
+    private ElementReference messagesContainer; // Tham chiếu đến div.messages
+    private string displayStyle = "none";
+    // BỔ SUNG: Hằng số và trạng thái cho AI Chat
+    private const string AiAssistantName = "AI Assistant";
+    private bool IsAiChatSelected { get; set; } = false;
+
+    private string TypingUser { get; set; } = string.Empty;
+    private CancellationTokenSource _typingCancellationTokenSource; // Dùng để hủy việc ẩn trạng thái gõ
+
+    // BỔ SUNG: Dữ liệu và trạng thái cho phần thả cảm xúc
+    private readonly string[] Reactions = new[] { "👍", "❤️", "😂", "😮", "😢", "😡" };
+    private string _activeMessageIdForReaction = string.Empty;
+
+    private bool IsReactionMenuVisible(string messageId) => _activeMessageIdForReaction == messageId;
+    private void ShowReactionMenu(string messageId) => _activeMessageIdForReaction = messageId;
+    private void HideReactionMenu() => _activeMessageIdForReaction = string.Empty;
+
+
+    List<ToastMessage> NotificationMessages = new List<ToastMessage>();
+    List<ToastMessage> AuthenticationMessages = new List<ToastMessage>();
+
+    List<ClientMessage> Messages = new List<ClientMessage>();
+    public string CallerUsername { get; set; } = String.Empty;
+    public string TextMessage { get; set; } = String.Empty;
+    public string GroupNameInput { get; set; } = String.Empty;
+    public bool IsAuthenticated { get; set; } = false;
+
+    private List<Client> ClientsOfGroups { get; set; } = new List<Client>();
+    private List<Client> Clients { get; set; } = new List<Client>();
+
+    class Client
+    {
+        public string ConnectionId { get; set; } = String.Empty;
+        public string Username { get; set; } = String.Empty;
+    }
+    class ClientMessage
+    {
+        public string MessageId { get; set; } = Guid.NewGuid().ToString(); // BỔ SUNG: ID duy nhất cho tin nhắn
+        public string ReceiverClientUsernameOrGroupName { get; set; } = String.Empty;
+        public string SenderClientUsername { get; set; } = String.Empty;
+        public string Message { get; set; } = String.Empty;
+        public bool IsGroupMessage { get; set; } = false;
+        public bool IsSenderReceiver { get; set; } = false;
+        public DateTime CreatedDate { get; set; } = DateTime.Now;
+        public string Reaction { get; set; } = string.Empty; // BỔ SUNG: Cảm xúc
+    }
+
+    private List<Group> Groups { get; set; } = new List<Group>();
+    class Group
+    {
+        public string GroupName { get; set; } = String.Empty;
+        public List<Client> Clients { get; } = new List<Client>();
+    }
+
+    private Client selectedClient = new Client();
+    private Group selectedGroup = new Group();
+
+    private HubConnection hubConnection;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+           .WithUrl("https://localhost:7038/chathub")
+           .Build();
+
+        hubConnection.On<string>("clientJoined", async (username) =>
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Info, "Thông báo", $"Người dùng **{username}** đã đăng nhập vào hệ thống."));
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<string>("clientLeaved", async (username) =>
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Info, "Thông báo", $"Kết nối của người dùng **{username}** đã bị ngắt."));
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<List<Client>>("clients", async (clientList) =>
+        {
+            Clients = clientList;
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<List<Client>, string>("clientsOfGroup", async (clientList, groupName) =>
+        {
+            if (selectedGroup != null && selectedGroup.GroupName.Equals(groupName))
+            {
+                ClientsOfGroups = clientList;
+                await InvokeAsync(StateHasChanged);
+            }
+        });
+
+        hubConnection.On<string>("groupAdded", async (groupName) =>
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Info, "Thông báo", $"Một phòng mới tên **{groupName}** đã được tạo."));
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<List<Group>>("groups", async (groupList) =>
+        {
+            Groups = groupList;
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<string, string>("userTyping", async (username, targetName) =>
+        {
+            bool isCurrentChat = (IsAiChatSelected && targetName.Equals(AiAssistantName)) || // BỔ SUNG: AI Chat
+                                 (!string.IsNullOrEmpty(selectedGroup.GroupName) && selectedGroup.GroupName.Equals(targetName)) ||
+                                 (string.IsNullOrEmpty(selectedGroup.GroupName) && selectedClient != null && selectedClient.Username.Equals(username));
+
+
+            if (isCurrentChat && !username.Equals(CallerUsername))
+            {
+                TypingUser = username;
+
+                _typingCancellationTokenSource?.Cancel();
+                _typingCancellationTokenSource = new CancellationTokenSource();
+
+                var token = _typingCancellationTokenSource.Token;
+
+                _ = Task.Run(async () =>
+              {
+                  try
+                  {
+                      await Task.Delay(3000, token);
+                      if (!token.IsCancellationRequested)
+
+                      {
+                          TypingUser = string.Empty;
+                          await InvokeAsync(StateHasChanged);
+                      }
+                  }
+                  catch (TaskCanceledException)
+                  {
+                  }
+              });
+            }
+            else if (!isCurrentChat && TypingUser.Equals(username))
+            {
+                TypingUser = string.Empty;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            await InvokeAsync(StateHasChanged);
+        });
+
+        // BỔ SUNG: Xử lý sự kiện nhận cảm xúc (GIỮ NGUYÊN)
+        hubConnection.On<string, string, string, string, bool>("receiveReaction",
+            async (senderUsername, targetName, reaction, messageId, isGroup) =>
+        {
+            // 1. Tìm tin nhắn trong toàn bộ lịch sử (Sử dụng messageId từ Server/Sender)
+            var messageToReact = Messages.FirstOrDefault(m => m.MessageId == messageId);
+
+            if (messageToReact != null)
+            {
+                // Cập nhật cảm xúc
+                messageToReact.Reaction = reaction;
+
+                // 2. Cập nhật UI nếu đang xem cuộc trò chuyện này
+                string currentChatTargetName = selectedClient.Username;
+                bool isCurrentGroupChat = false;
+
+                if (IsAiChatSelected)
+                {
+                    currentChatTargetName = AiAssistantName;
+                }
+                else if (!string.IsNullOrEmpty(selectedGroup.GroupName))
+                {
+                    currentChatTargetName = selectedGroup.GroupName;
+                    isCurrentGroupChat = true;
+                }
+
+                // Trường hợp 1: Group Chat. Target là GroupName.
+                bool isTargetGroupMatch = isCurrentGroupChat && isGroup && currentChatTargetName.Equals(targetName);
+
+                // Trường hợp 2: Private/AI Chat.
+                // Target là tên người nhận hoặc tên người gửi (vì sự kiện reaction được gửi cho cả hai)
+                bool isTargetPrivateOrAiMatch = !isCurrentGroupChat && !isGroup && (
+                    currentChatTargetName.Equals(targetName) || currentChatTargetName.Equals(senderUsername)
+                );
+
+                bool shouldFilterAndScroll = isTargetGroupMatch || isTargetPrivateOrAiMatch;
+
+                if (shouldFilterAndScroll)
+                {
+                    FilterUserMessages(currentChatTargetName, isCurrentGroupChat); // Lọc lại để cập nhật SelectedUserMessages
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        });
+
+        // ⭐ SỬA LỖI LỚN: Thêm messageId vào receiveMessage và dùng ID này để lưu
+        hubConnection.On<string, Client, Client?, string?, string>("receiveMessage",
+           async (message, senderClient, client, groupName, messageId) => // ⭐ ĐÃ SỬA: Thêm messageId
+        {
+            if (senderClient == null) return;
+
+            // ⭐ KHẮC PHỤC LỖI DUPLICATE: Nếu ID đã tồn tại, đây là tin nhắn tự gửi đã được thêm local, bỏ qua.
+            if (Messages.Any(m => m.MessageId == messageId))
+            {
+                // Giữ nguyên logic filter và scroll nếu ID trùng, để đảm bảo tin nhắn self-sent được scroll.
+            }
+            else
+            {
+                // Tin nhắn mới (từ người khác, hoặc AI trả lời)
+                string targetName;
+                bool isGroup = !string.IsNullOrEmpty(groupName);
+
+                // Xác định ReceiverClientUsernameOrGroupName để lưu vào lịch sử
+                if (isGroup)
+                {
+                    targetName = groupName;
+                }
+                else if (senderClient.Username.Equals(AiAssistantName)) // Tin nhắn từ AI
+                {
+                    targetName = CallerUsername; // AI luôn gửi cho CallerUsername (người đã chat với AI)
+                }
+                else
+                {
+                    targetName = client?.Username; // Tin nhắn riêng, người nhận là client
+                }
+
+                TypingUser = string.Empty;
+                _typingCancellationTokenSource?.Cancel();
+
+                Messages.Add(new ClientMessage()
+                {
+                    MessageId = messageId, // ⭐ KHẮC PHỤC: Sử dụng ID từ Server
+                    ReceiverClientUsernameOrGroupName = targetName,
+                    SenderClientUsername = senderClient.Username,
+                    Message = message,
+                    IsGroupMessage = isGroup,
+                    IsSenderReceiver = (senderClient.Username == CallerUsername),
+                    CreatedDate = DateTime.Now
+                });
+            }
+
+
+            // Xác định cuộc trò chuyện đang mở... (Logic còn lại giữ nguyên)
+            string currentChatTargetName = selectedClient.Username;
+            bool isCurrentGroupChat = false;
+
+            if (IsAiChatSelected) // Đang chat AI
+            {
+                currentChatTargetName = AiAssistantName;
+            }
+            else if (!string.IsNullOrEmpty(selectedGroup.GroupName))
+            {
+                currentChatTargetName = selectedGroup.GroupName;
+                isCurrentGroupChat = true;
+            }
+
+            bool shouldFilterAndScroll = false;
+
+            if (isCurrentGroupChat && !string.IsNullOrEmpty(groupName) && currentChatTargetName.Equals(groupName))
+            {
+                shouldFilterAndScroll = true;
+            }
+            // Kiểm tra tin nhắn AI
+            else if (IsAiChatSelected && senderClient.Username.Equals(AiAssistantName) && string.IsNullOrEmpty(groupName))
+            {
+                shouldFilterAndScroll = true;
+            }
+            else if (!isCurrentGroupChat && string.IsNullOrEmpty(groupName) && !IsAiChatSelected) // Chat riêng
+            {
+                // Tin nhắn đến (từ senderClient.Username) HOẶC tin nhắn đi (đến client.Username)
+                if (currentChatTargetName.Equals(senderClient.Username) || (client != null && currentChatTargetName.Equals(client.Username)))
+                {
+                    shouldFilterAndScroll = true;
+                }
+            }
+
+            if (shouldFilterAndScroll)
+            {
+                FilterUserMessages(currentChatTargetName, isCurrentGroupChat);
+                await InvokeAsync(StateHasChanged);
+                await ScrollToBottom();
+            }
+        });
+
+        try
+        {
+            await hubConnection.StartAsync();
+            if (hubConnection.State == HubConnectionState.Connected)
+            {
+                await hubConnection.SendAsync("GetClientsAsync");
+            }
+        }
+        catch (Exception ex)
+        {
+            AuthenticationMessages.Add(CreateToastMessage(ToastType.Danger, "Lỗi Kết nối", $"Không thể kết nối với Chat Server: {ex.Message}"));
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && IsAuthenticated && messagesContainer.Id != null)
+        {
+            await ScrollToBottom();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        if (messagesContainer.Id != null)
+        {
+            // Cần thêm một hàm JS scrollToBottom vào file _Host.cshtml hoặc index.html
+            // function scrollToBottom(element) { element.scrollTop = element.scrollHeight;
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", messagesContainer);
+        }
+    }
+
+
+    public async Task<bool> CheckUsernameAsync(string username)
+    {
+        Client client = Clients.FirstOrDefault(c => c.Username.Equals(username));
+        return (client == null);
+    }
+
+    public async Task<bool> CheckGroupNameAsync(string groupName)
+    {
+        Group group = Groups.FirstOrDefault(g => g.GroupName.Equals(groupName));
+        return (group == null);
+    }
+
+    async Task SignIn()
+    {
+        if (hubConnection == null || hubConnection.State != HubConnectionState.Connected)
+        {
+            AuthenticationMessages.Add(CreateToastMessage(ToastType.Danger, "Lỗi", "Kết nối Server bị ngắt. Vui lòng thử lại."));
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(CallerUsername))
+        {
+            bool result = await CheckUsernameAsync(CallerUsername);
+            if (result)
+            {
+                await hubConnection.SendAsync("GetUsernameAsync", CallerUsername);
+                IsAuthenticated = true;
+                await InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                AuthenticationMessages.Add(CreateToastMessage(ToastType.Warning, "Đăng nhập thất bại", "Tên người dùng đã bị sử dụng!"));
+            }
+        }
+    }
+
+    List<ClientMessage> SelectedUserMessages = new List<ClientMessage>();
+
+    void FilterUserMessages(string receiverClientNameOrGroupName, bool IsGroupMessage)
+    {
+        if (string.IsNullOrEmpty(receiverClientNameOrGroupName))
+        {
+            SelectedUserMessages.Clear();
+            return;
+        }
+
+        // BỔ SUNG: Lọc tin nhắn cho AI Chat
+        if (receiverClientNameOrGroupName.Equals(AiAssistantName))
+        {
+            SelectedUserMessages = Messages
+            .Where(msg =>
+              !msg.IsGroupMessage && (
+               (msg.SenderClientUsername.Equals(CallerUsername) && msg.ReceiverClientUsernameOrGroupName.Equals(AiAssistantName)) || // Tin gửi
+
+               (msg.SenderClientUsername.Equals(AiAssistantName) && msg.ReceiverClientUsernameOrGroupName.Equals(CallerUsername)) // Tin nhận
+                      )
+            )
+            .OrderBy(msg => msg.CreatedDate)
+            .ToList();
+            return;
+        }
+
+        if (IsGroupMessage)
+        {
+            SelectedUserMessages = Messages
+            .Where(msg => msg.IsGroupMessage && msg.ReceiverClientUsernameOrGroupName.Equals(receiverClientNameOrGroupName))
+            .OrderBy(msg => msg.CreatedDate)
+            .ToList();
+        }
+        else
+        {
+            SelectedUserMessages = Messages
+            .Where(msg =>
+              !msg.IsGroupMessage && (
+               (msg.SenderClientUsername.Equals(CallerUsername) && msg.ReceiverClientUsernameOrGroupName.Equals(receiverClientNameOrGroupName)) ||
+               (msg.SenderClientUsername.Equals(receiverClientNameOrGroupName) && msg.ReceiverClientUsernameOrGroupName.Equals(CallerUsername))
+
+              )
+            )
+            .OrderBy(msg => msg.CreatedDate)
+            .ToList();
+        }
+    }
+
+    private void SelectClient(Client client)
+    {
+        IsAiChatSelected = false; // BỔ SUNG: Tắt chế độ AI Chat
+        selectedClient = client;
+        selectedGroup = new Group();
+        ClientsOfGroups.Clear();
+        displayStyle = "none";
+        TypingUser = string.Empty;
+
+        FilterUserMessages(client.Username, false);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectGroup(Group group)
+    {
+        IsAiChatSelected = false; // BỔ SUNG: Tắt chế độ AI Chat
+        selectedGroup = group;
+        selectedClient = new Client();
+
+        if (hubConnection != null && hubConnection.State == HubConnectionState.Connected)
+        {
+            await AddClientToGroup(selectedGroup.GroupName);
+            await GetClientsOfGroup(selectedGroup.GroupName);
+        }
+
+        displayStyle = "block";
+        TypingUser = string.Empty;
+
+        FilterUserMessages(group.GroupName, true);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // BỔ SUNG: Phương thức chọn AI Chat
+    private async Task SelectAiChat()
+    {
+        IsAiChatSelected = true;
+        selectedClient = new Client();
+        selectedGroup = new Group();
+        ClientsOfGroups.Clear();
+        displayStyle = "none";
+        TypingUser = string.Empty;
+
+        FilterUserMessages(AiAssistantName, false);
+
+        await InvokeAsync(StateHasChanged);
+        await ScrollToBottom();
+    }
+
+
+    async Task SendMessageAsync(string message, string? groupName)
+    {
+        if (hubConnection == null || hubConnection.State != HubConnectionState.Connected)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Lỗi", "Kết nối Server bị ngắt. Không thể gửi."));
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // Cập nhật điều kiện kiểm tra mục tiêu chat
+        bool isChatTargetSelected = IsAiChatSelected ||
+            !string.IsNullOrEmpty(selectedClient.Username) || !string.IsNullOrEmpty(selectedGroup.GroupName);
+
+        if (string.IsNullOrEmpty(message) || !isChatTargetSelected)
+        {
+            if (!isChatTargetSelected)
+            {
+                NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Thao tác thất bại", "Vui lòng chọn người dùng, phòng, hoặc AI Assistant."));
+                await InvokeAsync(StateHasChanged);
+            }
+            return;
+        }
+
+        try
+        {
+            TypingUser = string.Empty;
+            _typingCancellationTokenSource?.Cancel();
+
+            // ⭐ KHẮC PHỤC LỖI CHÍNH: Tạo ID duy nhất ở Client và sử dụng nó
+            string newMessageId = Guid.NewGuid().ToString();
+            bool isGroup = !string.IsNullOrEmpty(groupName);
+            string targetName = isGroup ? groupName : (IsAiChatSelected ? AiAssistantName : selectedClient.Username);
+
+
+            // 1. THÊM MESSAGE VÀO LOCAL TRƯỚC (Cho tất cả các loại chat để sender thấy ngay lập tức)
+            Messages.Add(new ClientMessage()
+            {
+                MessageId = newMessageId,
+                Message = message,
+                ReceiverClientUsernameOrGroupName = targetName,
+                SenderClientUsername = CallerUsername,
+                IsSenderReceiver = true,
+                IsGroupMessage = isGroup,
+                CreatedDate = DateTime.Now
+            });
+
+            FilterUserMessages(targetName, isGroup);
+            await InvokeAsync(StateHasChanged);
+            await ScrollToBottom();
+
+
+            if (IsAiChatSelected)
+            {
+                // GỌI SERVER VÀ TRUYỀN ID
+                await hubConnection.SendAsync("SendMessageToAiAsync", message, newMessageId); // ⭐ ĐÃ SỬA: TRUYỀN messageId
+            }
+            else if (isGroup)
+            {
+                // GỌI SERVER VÀ TRUYỀN ID
+                await hubConnection.SendAsync("SendMessageToGroupAsync", groupName, message, newMessageId); // ⭐ ĐÃ SỬA: TRUYỀN messageId
+            }
+            else if (!string.IsNullOrEmpty(selectedClient.Username))
+            {
+                // GỌI SERVER VÀ TRUYỀN ID
+                await hubConnection.SendAsync("SendMessageAsync", message, selectedClient, newMessageId); // ⭐ ĐÃ SỬA: TRUYỀN messageId
+            }
+
+            if (!message.StartsWith("data:image"))
+            {
+                TextMessage = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Danger, "Lỗi Gửi", $"Không thể gửi tin nhắn/ảnh. Lỗi: {ex.Message}"));
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    async Task AddGroup(string groupNameInput)
+    {
+        if (hubConnection == null || hubConnection.State != HubConnectionState.Connected)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Lỗi", "Kết nối Server bị ngắt. Không thể tạo nhóm."));
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(groupNameInput))
+        {
+            bool result = await CheckGroupNameAsync(groupNameInput);
+            if (result) // Nếu tên phòng có thể sử dụng..
+            {
+                // 1. Kích hoạt Server để tạo nhóm
+                await hubConnection.SendAsync("AddGroupAsync", groupNameInput);
+
+                string newGroupName = GroupNameInput; // Lưu tên nhóm
+                GroupNameInput = string.Empty;
+
+                // 2. Chờ một khoảng ngắn (200ms) để Server gửi lại danh sách Groups đã cập nhật
+                await Task.Delay(200);
+
+                Group newGroup = Groups.FirstOrDefault(g => g.GroupName.Equals(newGroupName));
+
+                if (newGroup != null)
+                {
+                    // 3. Tự động chọn nhóm vừa tạo (Tham gia + Hiển thị thành viên/tin nhắn)
+                    await SelectGroup(newGroup);
+                    NotificationMessages.Add(CreateToastMessage(ToastType.Success, "Thành công", $"Phòng **{newGroupName}** đã được tạo và bạn đã tham gia."));
+                }
+            }
+            else
+            {
+                NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Thao tác thất bại", "Phòng có tên này đã tồn tại!"));
+            }
+        }
+    }
+
+    async Task AddClientToGroup(string groupName)
+    {
+        if (hubConnection.State == HubConnectionState.Connected)
+        {
+            await hubConnection.SendAsync("AddClientToGroupAsync", groupName);
+        }
+    }
+
+    async Task GetClientsOfGroup(string groupName)
+    {
+        if (hubConnection.State == HubConnectionState.Connected)
+        {
+            await hubConnection.SendAsync("GetClientsOfGroupAsync", groupName);
+        }
+    }
+
+    private bool _isTypingSent = false;
+    private DateTime _lastTypingSend = DateTime.MinValue;
+
+    private async Task KeyHandler(KeyboardEventArgs e)
+    {
+        bool isChatTargetSelected = IsAiChatSelected ||
+            !string.IsNullOrEmpty(selectedClient.Username) || !string.IsNullOrEmpty(selectedGroup.GroupName);
+        string target = IsAiChatSelected ? AiAssistantName : (string.IsNullOrEmpty(selectedGroup.GroupName) ? selectedClient.Username : selectedGroup.GroupName);
+
+        if (e.Key != "Enter" && isChatTargetSelected && !string.IsNullOrEmpty(TextMessage) && hubConnection != null && hubConnection.State == HubConnectionState.Connected)
+        {
+            if (DateTime.Now.Subtract(_lastTypingSend).TotalMilliseconds > 1500 || !_isTypingSent)
+            {
+                if (!string.IsNullOrEmpty(target))
+                {
+
+                    await hubConnection.SendAsync("SendTypingIndicator", target);
+                    _lastTypingSend = DateTime.Now;
+                    _isTypingSent = true;
+                }
+            }
+        }
+        else if (string.IsNullOrEmpty(TextMessage))
+        {
+            _isTypingSent = false;
+        }
+
+
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessageAsync(TextMessage, selectedGroup?.GroupName);
+            _isTypingSent = false;
+        }
+        else if (e.Key == "Enter" && e.ShiftKey)
+        {
+            TextMessage += Environment.NewLine;
+        }
+    }
+
+    // BỔ SUNG: Phương thức gửi cảm xúc (Reaction) (GIỮ NGUYÊN)
+    private async Task SendReaction(ClientMessage msg, string reaction)
+    {
+        if (hubConnection == null || hubConnection.State != HubConnectionState.Connected)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Lỗi", "Kết nối Server bị ngắt. Không thể thả cảm xúc."));
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        string targetUsernameOrGroupName = string.Empty;
+        bool isGroup = false;
+
+        if (IsAiChatSelected)
+        {
+            // Ngăn chặn thả reaction vào tin nhắn của AI Assistant.
+            if (msg.SenderClientUsername.Equals(AiAssistantName))
+            {
+                NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Thao tác thất bại", "Không thể thả cảm xúc cho tin nhắn của AI Assistant."));
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+            targetUsernameOrGroupName = AiAssistantName;
+        }
+        else if (!string.IsNullOrEmpty(selectedGroup.GroupName))
+        {
+            // Group Chat
+            targetUsernameOrGroupName = selectedGroup.GroupName;
+            isGroup = true;
+        }
+        else if (!string.IsNullOrEmpty(selectedClient.Username))
+        {
+            // Private Chat
+            targetUsernameOrGroupName = selectedClient.Username;
+        }
+
+        if (string.IsNullOrEmpty(targetUsernameOrGroupName)) return;
+
+        // 1. Cập nhật local trước
+        // Bật/Tắt cảm xúc: Nếu reaction đã có VÀ giống reaction đang click thì xóa (string.Empty), nếu khác thì gán reaction mới.
+        msg.Reaction = msg.Reaction == reaction ? string.Empty : reaction;
+
+        HideReactionMenu();
+
+        // Lọc lại message để cập nhật UI
+        FilterUserMessages(isGroup ? selectedGroup.GroupName : IsAiChatSelected ? AiAssistantName : selectedClient.Username, isGroup);
+        await InvokeAsync(StateHasChanged);
+
+        // 2. GỌI SERVER (Nếu không phải chat AI)
+        if (!IsAiChatSelected)
+        {
+            // Server sẽ gửi reaction đến người nhận/nhóm
+            // Do đã sửa Server để gửi cho cả hai, logic Client này là đủ.
+            await hubConnection.SendAsync("SendReactionAsync", targetUsernameOrGroupName, msg.MessageId, msg.Reaction);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+        _typingCancellationTokenSource?.Cancel();
+    }
+
+    private ToastMessage CreateToastMessage(ToastType toastType, string title, string message)
+    => new ToastMessage
+    {
+        Type = toastType,
+        Title = title,
+        HelpText = $"{DateTime.Now}",
+        Message = $"{message}",
+    };
+    private ToastMessage CreateToastMessage(ToastType toastType, string message)
+    => CreateToastMessage(toastType, "Thông báo", message);
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null)
+            return;
+
+        if (string.IsNullOrEmpty(selectedClient.Username) && string.IsNullOrEmpty(selectedGroup.GroupName) && !IsAiChatSelected)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Lỗi", "Vui lòng chọn người dùng, phòng hoặc AI Assistant để gửi ảnh."));
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 10_000_000);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+
+            string base64 = Convert.ToBase64String(ms.ToArray());
+            string imageUrl = $"data:{file.ContentType};base64,{base64}";
+
+            await SendImageMessage(imageUrl);
+        }
+        catch (Exception ex)
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Danger, "Lỗi Tải Ảnh", $"Không thể xử lý file. Lỗi: {ex.Message}"));
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+
+    @* PHƯƠNG THỨC GÂY LỖI ĐÃ ĐƯỢC XÓA BỎ: private async Task SendMessage() *@
+
+
+    private async Task TriggerFileInput()
+    {
+        if (hubConnection != null && hubConnection.State == HubConnectionState.Connected)
+        {
+            // Cần thêm một hàm JS triggerFileInput() vào file _Host.cshtml hoặc index.html
+            // function triggerFileInput() { document.getElementById('fileInput').click();
+            await JSRuntime.InvokeVoidAsync("triggerFileInput");
+        }
+        else
+        {
+            NotificationMessages.Add(CreateToastMessage(ToastType.Warning, "Lỗi kết nối", "Không thể mở hộp thoại chọn ảnh. Kết nối Server đã bị ngắt."));
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SendImageMessage(string base64Img)
+    {
+        if (IsAiChatSelected || !string.IsNullOrEmpty(selectedClient.Username))
+        {
+            // Chat AI và Chat Riêng đều dùng SendMessageAsync với groupName = null
+            await SendMessageAsync(base64Img, null);
+        }
+        else if (!string.IsNullOrEmpty(selectedGroup.GroupName))
+        {
+            await SendMessageAsync(base64Img, selectedGroup.GroupName);
+        }
+    }
+}
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet" />
+<link href="css/fontawesome.min.css" rel="stylesheet" />
